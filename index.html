@@ -89,7 +89,7 @@
 <div class="overlay hidden" id="start">
   <div class="card">
     <h1>Something pink arrived.</h1>
-    <p>Hold your phone flat like the postcard and tilt it slowly. Be patient with the sand.</p>
+    <p>Hold your phone the way you'd hold the postcard. That's level. Now tilt it, slowly, and be patient with the sand.</p>
     <p class="small">Guess wrong and you owe me a chocolate egg. Guess right and I owe you one.</p>
     <button id="go">Tip it over</button>
   </div>
@@ -141,7 +141,7 @@
   const cv = document.getElementById('c');
   const ctx = cv.getContext('2d');
   const CELL = 6;
-  let W, H, dpr, gw, gh, field, target;
+  let W, H, dpr, gw, gh, field, target, dens;
   const off = document.createElement('canvas');
   const offCtx = off.getContext('2d', { willReadFrequently: true });
   const relief = document.createElement('canvas');
@@ -155,6 +155,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     gw = Math.ceil(W / CELL) + 1; gh = Math.ceil(H / CELL) + 1;
     field = new Float32Array(gw * gh);
+    dens = new Float32Array(gw * gh);
     target = new Float32Array(gw * gh);
     off.width = gw; off.height = gh;
     relief.width = gw; relief.height = gh;
@@ -196,27 +197,40 @@
   }
 
   // ---------- sand ----------
-  let N, px, py, vx, vy, hx, hy, tw;
+  let N, px, py, vx, vy, tw;
   function initParticles() {
     N = Math.min(3600, Math.round(W * H / 55));
     px = new Float32Array(N); py = new Float32Array(N);
     vx = new Float32Array(N); vy = new Float32Array(N);
-    hx = new Float32Array(N); hy = new Float32Array(N);
     tw = new Float32Array(N);
     for (let i = 0; i < N; i++) {
-      hx[i] = px[i] = Math.random() * W;
-      hy[i] = py[i] = Math.random() * H;
+      px[i] = Math.random() * W;
+      py[i] = Math.random() * H;
       tw[i] = Math.random() * Math.PI * 2;
     }
   }
 
   // ---------- input: tilt, touch, mouse ----------
-  let rawX = 0, rawY = 0, baseX = 0, baseY = 0, gx = 0, gy = 0, haveTilt = false;
+  // Real gravity: level is the pose at the moment of tapping start.
+  let tiltX = 0, tiltY = 0, refB = null, refG = null, gx = 0, gy = 0;
+  let sensor = 'none', events = 0;
+  const DEAD = 0.06;  // about 3.5 degrees before sand starts to slide
+  const rad = Math.PI / 180;
   function onOrient(e) {
-    if (e.gamma == null) return;
-    rawX = Math.max(-2, Math.min(2, e.gamma / 25));
-    rawY = Math.max(-2, Math.min(2, e.beta / 25));
-    if (!haveTilt) { baseX = rawX; baseY = rawY; haveTilt = true; }
+    if (e.beta == null || e.gamma == null) return;
+    if (refB === null) { refB = e.beta; refG = e.gamma; }
+    tiltX = Math.sin(Math.max(-90, Math.min(90, e.gamma - refG)) * rad);
+    tiltY = Math.sin(Math.max(-90, Math.min(90, e.beta - refB)) * rad);
+    sensor = 'orientation'; events++;
+  }
+  // Fallback for browsers that only deliver motion events
+  function onMotion(e) {
+    if (sensor === 'orientation') return;
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null) return;
+    tiltX = Math.max(-1, Math.min(1, -a.x / 9.81));
+    tiltY = Math.max(-1, Math.min(1, a.y / 9.81));
+    sensor = 'motion'; events++;
   }
 
   const stir = { x: 0, y: 0, dx: 0, dy: 0, active: false };
@@ -263,23 +277,45 @@
     if (!running) return;
     if (phase < 0 || t - phaseStart > PHASE_MS) {
       phase++;
-      if (phase >= 6 || order.length === 0) { newRound(); phase = 0; }
+      if (phase >= 6 || order.length === 0) {
+        newRound(); phase = 0;
+        dotEls.forEach(d => d.classList.remove('lit'));
+      }
       phaseStart = t;
-      dotEls[phase].classList.add('lit');
     }
     const g = phaseGlyph(t);
     if (g !== currentGlyph) setTarget(g);
+    // the dot lights when the letter arrives, not at the start of the empty pause
+    if (g) dotEls[phase].classList.add('lit');
   }
 
   // ---------- main loop ----------
   let frame = 0;
+  let dbg = null;
+  if (params.has('debug')) {
+    dbg = document.createElement('div');
+    dbg.style.cssText = 'position:fixed;left:8px;top:calc(env(safe-area-inset-top,0px) + 44px);font:12px monospace;color:#3E0F2E;background:rgba(255,255,255,.7);padding:4px 6px;border-radius:4px;z-index:9';
+    document.body.appendChild(dbg);
+  }
   function step(t) {
     frame++;
     tickPhase(t);
 
-    // tilt relative to a slowly drifting baseline: sustained tilt fades, movement sloshes
-    baseX += (rawX - baseX) * 0.012; baseY += (rawY - baseY) * 0.012;
-    gx += ((rawX - baseX) - gx) * 0.2; gy += ((rawY - baseY) - gy) * 0.2;
+    // gravity from tilt, minus a small dead zone, smoothed so sensor noise doesn't jitter the sand
+    const dz = v => Math.abs(v) < DEAD ? 0 : v - Math.sign(v) * DEAD;
+    gx += (dz(tiltX) - gx) * 0.25; gy += (dz(tiltY) - gy) * 0.25;
+    const gmag = Math.hypot(gx, gy);
+    // caught sand only lets go when tilted hard
+    const hold = gmag > 0.35 ? (gmag - 0.35) / gmag : 0;
+
+    // sand density, so piles spread out instead of collapsing to a point
+    dens.fill(0);
+    for (let i = 0; i < N; i++) {
+      const cx = Math.min(gw - 1, Math.max(0, (px[i] / CELL) | 0));
+      const cy = Math.min(gh - 1, Math.max(0, (py[i] / CELL) | 0));
+      dens[cy * gw + cx] += 1;
+    }
+    blur(dens, 1);
 
     for (let i = 0; i < field.length; i++) field[i] += (target[i] - field[i]) * 0.02;
 
@@ -296,16 +332,18 @@
       const caught = f > 0.5;
 
       // sand drifts with the liquid
-      let ax = gx * 0.22 * (caught ? 0.12 : 1);
-      let ay = gy * 0.22 * (caught ? 0.12 : 1);
+      const gk = caught ? 0.9 * hold : 0.9;
+      let ax = gx * gk, ay = gy * gk;
+      const spread = caught ? 0.015 : 0.05;
+      ax -= (dens[ci + 1] - dens[ci - 1]) * spread;
+      ay -= (dens[ci + gw] - dens[ci - gw]) * spread;
 
       // grooves catch moving sand
       const pull = 2.4 * Math.min(1, 0.04 + speed * 0.7);
       ax += fgx * pull; ay += fgy * pull;
 
       if (!caught) {
-        ax += (hx[i] - x) * 0.0006; ay += (hy[i] - y) * 0.0006;
-        ax += (Math.random() - 0.5) * 0.05; ay += (Math.random() - 0.5) * 0.05;
+        ax += (Math.random() - 0.5) * 0.03; ay += (Math.random() - 0.5) * 0.03;
       }
 
       if (stir.active) {
@@ -313,7 +351,7 @@
         if (d2 < sr2) { const k = (1 - d2 / sr2) * 0.12; ax += sx * k; ay += sy * k; }
       }
 
-      const damp = caught ? 0.8 : 0.93;
+      const damp = caught ? 0.8 : 0.9;
       vx[i] = (vx[i] + ax) * damp; vy[i] = (vy[i] + ay) * damp;
       x += vx[i]; y += vy[i];
       if (x < 0) { x = 0; vx[i] *= -0.3; } else if (x > W) { x = W; vx[i] *= -0.3; }
@@ -323,12 +361,13 @@
     stir.dx *= 0.6; stir.dy *= 0.6;
 
     for (const b of blobs) {
-      b.vx += gx * 0.0009 + (b.hx - b.x) * 0.002 + (stir.active ? stir.dx * 0.00004 : 0);
-      b.vy += gy * 0.0009 + (b.hy - b.y) * 0.002 + (stir.active ? stir.dy * 0.00004 : 0);
+      b.vx += gx * 0.0012 + (b.hx - b.x) * 0.002 + (stir.active ? stir.dx * 0.00004 : 0);
+      b.vy += gy * 0.0012 + (b.hy - b.y) * 0.002 + (stir.active ? stir.dy * 0.00004 : 0);
       b.vx *= 0.96; b.vy *= 0.96; b.x += b.vx; b.y += b.vy;
     }
 
     draw(t);
+    if (dbg && frame % 10 === 0) dbg.textContent = `${sensor} | events ${events} | tilt ${tiltX.toFixed(2)}, ${tiltY.toFixed(2)}`;
     requestAnimationFrame(step);
   }
 
@@ -392,6 +431,7 @@
         if (r !== 'granted') throw new Error('denied');
       }
       addEventListener('deviceorientation', onOrient);
+      addEventListener('devicemotion', onMotion);
     } catch (e) {
       // no tilt: fingers can still stir the sand
     }
