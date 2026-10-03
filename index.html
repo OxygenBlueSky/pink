@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Something pink</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shrikhand&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --pink-light: #FFC6DD;
+    --pink: #F48BB9;
+    --pink-deep: #D6337F;
+    --gold: #F2C14E;
+    --gold-pale: #FFE7A3;
+    --plum: #3E0F2E;
+    --display: "Shrikhand", "Cooper Black", Georgia, serif;
+    --body: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: var(--pink); color: var(--plum); font-family: var(--body); }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+
+  .dots {
+    position: fixed; left: 0; right: 0; top: calc(env(safe-area-inset-top, 0px) + 18px);
+    display: flex; justify-content: center; gap: 14px; pointer-events: none;
+  }
+  .dot {
+    width: 13px; height: 13px; border-radius: 0 50% 50% 50%; transform: rotate(45deg);
+    background: rgba(255,255,255,0.35); box-shadow: inset 0 0 0 1.5px rgba(62,15,46,0.25);
+    transition: background 1.2s ease, box-shadow 1.2s ease;
+  }
+  .dot.lit { background: var(--gold); box-shadow: 0 0 10px rgba(242,193,78,0.9); }
+
+  .overlay {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: calc(env(safe-area-inset-top, 0px) + 24px) 28px calc(env(safe-area-inset-bottom, 0px) + 24px);
+    background: rgba(255, 198, 221, 0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    transition: opacity .6s ease;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .card { max-width: 30ch; text-align: center; }
+  h1 { font-family: var(--display); font-weight: 400; font-size: clamp(2.2rem, 9vw, 3.4rem); line-height: 1.05; margin: 0 0 .5em; color: var(--pink-deep); }
+  p { font-size: 1.05rem; line-height: 1.5; margin: 0 0 1em; }
+  .small { font-size: .9rem; opacity: .8; }
+  button {
+    font: 700 1.05rem var(--body); color: var(--plum); background: var(--gold);
+    border: none; border-radius: 999px; padding: .8em 1.6em; cursor: pointer;
+    box-shadow: 0 3px 0 #B98B22;
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #B98B22; }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--plum); outline-offset: 3px; }
+  .link { background: none; box-shadow: none; text-decoration: underline; font-weight: 400; padding: .6em; margin-top: 1em; }
+
+  .guess {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 12px 16px calc(env(safe-area-inset-bottom, 0px) + 14px);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    transition: opacity .6s ease;
+  }
+  .guess.hidden { opacity: 0; pointer-events: none; }
+  .row { display: flex; gap: 8px; width: 100%; max-width: 420px; }
+  input {
+    flex: 1; min-width: 0; font: 1.05rem var(--body); color: var(--plum);
+    background: rgba(255,255,255,0.75); border: none; border-radius: 999px; padding: .75em 1.1em;
+  }
+  .eggs { font-size: .95rem; min-height: 1.4em; text-align: center; }
+  .reply { font-weight: 700; }
+  .shake { animation: shake .4s; }
+  @keyframes shake { 20%,60% { transform: translateX(-6px); } 40%,80% { transform: translateX(6px); } }
+
+  .name { font-family: var(--display); font-size: clamp(3rem, 16vw, 5.5rem); color: var(--gold); text-shadow: 0 2px 0 #B98B22, 0 0 24px rgba(255,231,163,.9); margin: 0 0 .3em; line-height: 1; }
+</style>
+</head>
+<body>
+<canvas id="c" aria-hidden="true"></canvas>
+
+<div class="dots" id="dots" aria-hidden="true"></div>
+
+<div class="overlay hidden" id="gate">
+  <div class="card">
+    <h1>This one has to be held.</h1>
+    <p>Open the link on your phone. The sand only moves when you tilt it.</p>
+    <button class="link" id="peek">Peek on this screen anyway</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="start">
+  <div class="card">
+    <h1>Something pink arrived.</h1>
+    <p>Hold your phone flat like the postcard and tilt it slowly. Be patient with the sand.</p>
+    <p class="small">Guess wrong and you owe me a chocolate egg. Guess right and I owe you one.</p>
+    <button id="go">Tip it over</button>
+  </div>
+</div>
+
+<div class="guess hidden" id="guess">
+  <div class="eggs" id="eggs" aria-live="polite"></div>
+  <div class="row" id="row">
+    <input id="name" type="text" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="Who sent it?" aria-label="Your guess">
+    <button id="try">Guess</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="win">
+  <div class="card">
+    <p class="name" id="winName"></p>
+    <p id="winText"></p>
+  </div>
+</div>
+
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const PHASE_MS = params.has('fast') ? 12000 : 50000;  // ?fast for testing
+  const BLANK_MS = params.has('fast') ? 1500 : 5000;    // empty pause between letters
+
+  // Letters are stored obfuscated so a glance at the source shows nothing.
+  const K = 90;
+  const dec = a => String.fromCharCode(...a.map(c => c ^ K));
+  const FIRST_FIVE = [27, 20, 31, 17, 27];
+  const LAST_PLAIN = [0], LAST_HAT = [295];
+  const REVEAL = [27, 52, 63, 292, 49, 59];
+  const ANSWER = 4450202707936388;
+
+  const cyrb53 = (str, seed = 7) => {
+    let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0, ch; i < str.length; i++) {
+      ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507); h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507); h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+  };
+  const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+  // ---------- canvas and grid ----------
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const CELL = 6;
+  let W, H, dpr, gw, gh, field, target;
+  const off = document.createElement('canvas');
+  const offCtx = off.getContext('2d', { willReadFrequently: true });
+  const relief = document.createElement('canvas');
+  const reliefCtx = relief.getContext('2d');
+  let reliefImg;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    gw = Math.ceil(W / CELL) + 1; gh = Math.ceil(H / CELL) + 1;
+    field = new Float32Array(gw * gh);
+    target = new Float32Array(gw * gh);
+    off.width = gw; off.height = gh;
+    relief.width = gw; relief.height = gh;
+    reliefImg = reliefCtx.createImageData(gw, gh);
+    setTarget(currentGlyph);
+    initParticles();
+  }
+
+  function blur(a, passes) {
+    const tmp = new Float32Array(a.length);
+    for (let p = 0; p < passes; p++) {
+      for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+        let s = 0, n = 0;
+        for (let k = -1; k <= 1; k++) { const xx = x + k; if (xx >= 0 && xx < gw) { s += a[y * gw + xx]; n++; } }
+        tmp[y * gw + x] = s / n;
+      }
+      for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+        let s = 0, n = 0;
+        for (let k = -1; k <= 1; k++) { const yy = y + k; if (yy >= 0 && yy < gh) { s += tmp[yy * gw + x]; n++; } }
+        a[y * gw + x] = s / n;
+      }
+    }
+  }
+
+  let currentGlyph = null;
+  function setTarget(glyph) {
+    currentGlyph = glyph;
+    target.fill(0);
+    if (!glyph) return;
+    offCtx.clearRect(0, 0, gw, gh);
+    offCtx.fillStyle = '#fff';
+    const size = Math.min(gw * 0.9, gh * 0.5);
+    offCtx.font = `900 ${size}px "Arial Black", "Helvetica Neue", Arial, sans-serif`;
+    offCtx.textAlign = 'center'; offCtx.textBaseline = 'middle';
+    offCtx.fillText(glyph, gw / 2, gh * 0.5);
+    const d = offCtx.getImageData(0, 0, gw, gh).data;
+    for (let i = 0; i < target.length; i++) target[i] = d[i * 4 + 3] / 255;
+    blur(target, 2);
+  }
+
+  // ---------- sand ----------
+  let N, px, py, vx, vy, hx, hy, tw;
+  function initParticles() {
+    N = Math.min(3600, Math.round(W * H / 55));
+    px = new Float32Array(N); py = new Float32Array(N);
+    vx = new Float32Array(N); vy = new Float32Array(N);
+    hx = new Float32Array(N); hy = new Float32Array(N);
+    tw = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      hx[i] = px[i] = Math.random() * W;
+      hy[i] = py[i] = Math.random() * H;
+      tw[i] = Math.random() * Math.PI * 2;
+    }
+  }
+
+  // ---------- input: tilt, touch, mouse ----------
+  let rawX = 0, rawY = 0, baseX = 0, baseY = 0, gx = 0, gy = 0, haveTilt = false;
+  function onOrient(e) {
+    if (e.gamma == null) return;
+    rawX = Math.max(-2, Math.min(2, e.gamma / 25));
+    rawY = Math.max(-2, Math.min(2, e.beta / 25));
+    if (!haveTilt) { baseX = rawX; baseY = rawY; haveTilt = true; }
+  }
+
+  const stir = { x: 0, y: 0, dx: 0, dy: 0, active: false };
+  let lastPt = null;
+  function pointerMove(x, y) {
+    if (lastPt) { stir.dx = x - lastPt.x; stir.dy = y - lastPt.y; }
+    stir.x = x; stir.y = y; stir.active = true;
+    lastPt = { x, y };
+  }
+  cv.addEventListener('pointermove', e => pointerMove(e.clientX, e.clientY));
+  cv.addEventListener('pointerdown', e => { lastPt = { x: e.clientX, y: e.clientY }; });
+  cv.addEventListener('pointerup', () => { lastPt = null; stir.active = false; });
+  cv.addEventListener('pointerleave', () => { lastPt = null; stir.active = false; });
+
+  // liquid blobs that slosh with the tilt
+  const blobs = [
+    { x: .3, y: .3, vx: 0, vy: 0, r: .55, c: 'rgba(255,255,255,0.20)' },
+    { x: .7, y: .6, vx: 0, vy: 0, r: .6,  c: 'rgba(214,51,127,0.18)' },
+    { x: .5, y: .85, vx: 0, vy: 0, r: .5, c: 'rgba(255,231,163,0.10)' },
+    { x: .2, y: .75, vx: 0, vy: 0, r: .45, c: 'rgba(214,51,127,0.12)' },
+  ];
+  blobs.forEach(b => { b.hx = b.x; b.hy = b.y; });
+
+  // ---------- phases ----------
+  const dotsEl = document.getElementById('dots');
+  for (let i = 0; i < 6; i++) { const d = document.createElement('div'); d.className = 'dot'; dotsEl.appendChild(d); }
+  const dotEls = [...dotsEl.children];
+
+  let running = false, phase = -1, phaseStart = 0, order = [];
+  function newRound() {
+    const five = FIRST_FIVE.slice();
+    for (let i = five.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [five[i], five[j]] = [five[j], five[i]]; }
+    order = five.map(c => ({ plain: dec([c]) }));
+    order.push({ plain: dec(LAST_PLAIN), hat: dec(LAST_HAT) });  // always last
+  }
+  function phaseGlyph(t) {
+    const el = t - phaseStart;
+    if (el < BLANK_MS) return null;
+    const p = order[phase];
+    if (p.hat && el > BLANK_MS + (PHASE_MS - BLANK_MS) * 0.45) return p.hat;
+    return p.plain;
+  }
+  function tickPhase(t) {
+    if (!running) return;
+    if (phase < 0 || t - phaseStart > PHASE_MS) {
+      phase++;
+      if (phase >= 6 || order.length === 0) { newRound(); phase = 0; }
+      phaseStart = t;
+      dotEls[phase].classList.add('lit');
+    }
+    const g = phaseGlyph(t);
+    if (g !== currentGlyph) setTarget(g);
+  }
+
+  // ---------- main loop ----------
+  let frame = 0;
+  function step(t) {
+    frame++;
+    tickPhase(t);
+
+    // tilt relative to a slowly drifting baseline: sustained tilt fades, movement sloshes
+    baseX += (rawX - baseX) * 0.012; baseY += (rawY - baseY) * 0.012;
+    gx += ((rawX - baseX) - gx) * 0.2; gy += ((rawY - baseY) - gy) * 0.2;
+
+    for (let i = 0; i < field.length; i++) field[i] += (target[i] - field[i]) * 0.02;
+
+    const sx = stir.dx, sy = stir.dy, sr = 80, sr2 = sr * sr;
+    for (let i = 0; i < N; i++) {
+      let x = px[i], y = py[i];
+      const cx = Math.min(gw - 2, Math.max(1, (x / CELL) | 0));
+      const cy = Math.min(gh - 2, Math.max(1, (y / CELL) | 0));
+      const ci = cy * gw + cx;
+      const f = field[ci];
+      const fgx = field[ci + 1] - field[ci - 1];
+      const fgy = field[ci + gw] - field[ci - gw];
+      const speed = Math.abs(vx[i]) + Math.abs(vy[i]);
+      const caught = f > 0.5;
+
+      // sand drifts with the liquid
+      let ax = gx * 0.22 * (caught ? 0.12 : 1);
+      let ay = gy * 0.22 * (caught ? 0.12 : 1);
+
+      // grooves catch moving sand
+      const pull = 2.4 * Math.min(1, 0.04 + speed * 0.7);
+      ax += fgx * pull; ay += fgy * pull;
+
+      if (!caught) {
+        ax += (hx[i] - x) * 0.0006; ay += (hy[i] - y) * 0.0006;
+        ax += (Math.random() - 0.5) * 0.05; ay += (Math.random() - 0.5) * 0.05;
+      }
+
+      if (stir.active) {
+        const ddx = x - stir.x, ddy = y - stir.y, d2 = ddx * ddx + ddy * ddy;
+        if (d2 < sr2) { const k = (1 - d2 / sr2) * 0.12; ax += sx * k; ay += sy * k; }
+      }
+
+      const damp = caught ? 0.8 : 0.93;
+      vx[i] = (vx[i] + ax) * damp; vy[i] = (vy[i] + ay) * damp;
+      x += vx[i]; y += vy[i];
+      if (x < 0) { x = 0; vx[i] *= -0.3; } else if (x > W) { x = W; vx[i] *= -0.3; }
+      if (y < 0) { y = 0; vy[i] *= -0.3; } else if (y > H) { y = H; vy[i] *= -0.3; }
+      px[i] = x; py[i] = y;
+    }
+    stir.dx *= 0.6; stir.dy *= 0.6;
+
+    for (const b of blobs) {
+      b.vx += gx * 0.0009 + (b.hx - b.x) * 0.002 + (stir.active ? stir.dx * 0.00004 : 0);
+      b.vy += gy * 0.0009 + (b.hy - b.y) * 0.002 + (stir.active ? stir.dy * 0.00004 : 0);
+      b.vx *= 0.96; b.vy *= 0.96; b.x += b.vx; b.y += b.vy;
+    }
+
+    draw(t);
+    requestAnimationFrame(step);
+  }
+
+  const golds = ['#F2C14E', '#FFE7A3', '#C8922A'];
+  function draw(t) {
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#FFC6DD'); bg.addColorStop(1, '#F07AB0');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+    const m = Math.max(W, H);
+    for (const b of blobs) {
+      const g = ctx.createRadialGradient(b.x * W, b.y * H, 0, b.x * W, b.y * H, b.r * m);
+      g.addColorStop(0, b.c); g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
+
+    // the faint bulge of the hidden relief
+    if (frame % 4 === 0) {
+      const d = reliefImg.data;
+      for (let i = 0; i < field.length; i++) {
+        d[i * 4] = 170; d[i * 4 + 1] = 30; d[i * 4 + 2] = 100; d[i * 4 + 3] = field[i] * 26;
+      }
+      reliefCtx.putImageData(reliefImg, 0, 0);
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(relief, 0, 0, gw * CELL, gh * CELL);
+
+    for (let b = 0; b < 3; b++) {
+      ctx.fillStyle = golds[b];
+      ctx.beginPath();
+      for (let i = b; i < N; i += 3) ctx.rect(px[i] - 0.9, py[i] - 0.9, 1.8, 1.8);
+      ctx.fill();
+    }
+    // a few grains catch the light
+    const ts = t * 0.003;
+    ctx.fillStyle = '#FFFBEA';
+    ctx.beginPath();
+    for (let i = 0; i < N; i += 7) {
+      if (Math.sin(ts + tw[i] * 10) > 0.985) ctx.rect(px[i] - 1.5, py[i] - 1.5, 3, 3);
+    }
+    ctx.fill();
+  }
+
+  // ---------- screens ----------
+  const $ = id => document.getElementById(id);
+  const isPhone = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
+  function begin() {
+    $('gate').classList.add('hidden');
+    $('start').classList.add('hidden');
+    $('guess').classList.remove('hidden');
+    running = true;
+    renderEggs();
+  }
+
+  $('peek').addEventListener('click', begin);
+  $('go').addEventListener('click', async () => {
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const r = await DeviceOrientationEvent.requestPermission();
+        if (r !== 'granted') throw new Error('denied');
+      }
+      addEventListener('deviceorientation', onOrient);
+    } catch (e) {
+      // no tilt: fingers can still stir the sand
+    }
+    begin();
+  });
+  (isPhone ? $('start') : $('gate')).classList.remove('hidden');
+
+  // ---------- guessing and eggs ----------
+  let eggs = 0;
+  try { eggs = parseInt(localStorage.getItem('gk-eggs') || '0', 10) || 0; } catch (e) {}
+  const saveEggs = () => { try { localStorage.setItem('gk-eggs', String(eggs)); } catch (e) {} };
+  const eggLine = n => n === 0 ? 'No eggs owed. Yet.' : `You owe me ${n} chocolate egg${n === 1 ? '' : 's'}.`;
+  function renderEggs(reply) {
+    $('eggs').innerHTML = (reply ? `<span class="reply">${reply}</span> ` : '') + eggLine(eggs);
+  }
+
+  const replies = [
+    'Nope.', 'Close. Also no.', 'The sand disagrees.', 'Wait for more letters.',
+    'Bold guess. Wrong, though.', 'Do you even know this person?', 'Tilt harder.',
+  ];
+  let ri = 0;
+
+  function guess() {
+    const val = $('name').value.trim();
+    if (!val) { $('name').focus(); return; }
+    const words = norm(val).split(/[^a-z]+/).filter(Boolean);
+    if (words.some(w => cyrb53(w) === ANSWER)) return win();
+    eggs++; saveEggs();
+    renderEggs(replies[ri++ % replies.length]);
+    const row = $('row'); row.classList.remove('shake'); void row.offsetWidth; row.classList.add('shake');
+    $('name').select();
+  }
+  $('try').addEventListener('click', guess);
+  $('name').addEventListener('keydown', e => { if (e.key === 'Enter') guess(); });
+
+  function win() {
+    $('name').blur();
+    $('guess').classList.add('hidden');
+    $('winName').textContent = dec(REVEAL);
+    $('winText').textContent = eggs === 0
+      ? 'First try. I owe you a chocolate egg.'
+      : `Got it. I owe you one chocolate egg, you owe me ${eggs}. We should talk.`;
+    $('win').classList.remove('hidden');
+    for (let i = 0; i < N; i++) { vx[i] += (Math.random() - 0.5) * 30; vy[i] += (Math.random() - 0.5) * 30; }
+    setTarget(null);
+    running = false;
+  }
+
+  addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(step);
+})();
+</script>
+</body>
+</html>
