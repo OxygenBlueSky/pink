@@ -101,7 +101,7 @@
 <script>
 (() => {
   const params = new URLSearchParams(location.search);
-  const PHASE_MS = params.has('fast') ? 12000 : 50000;  // ?fast for testing
+  const PHASE_MS = params.has('fast') ? 12000 : 25000;  // per letter, including the empty pause; ?fast for testing
   const BLANK_MS = params.has('fast') ? 1500 : 5000;    // empty pause between letters
   const SHOW_RELIEF = params.has('relief');              // ?relief shows where the letter is
 
