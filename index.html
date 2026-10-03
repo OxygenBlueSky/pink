@@ -197,17 +197,55 @@
   }
 
   // ---------- sand ----------
-  let N, px, py, vx, vy, tw;
+  // Every grain starts in a heap at the top and is poured onto the tray when play begins.
+  // falling[i] = 1 while a grain is still in the heap or in the air; landY is where it lands.
+  let N, px, py, vx, vy, tw, falling, landY, releaseAt, prevW, prevH;
+  let pourStart = null;
+  const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
   function initParticles() {
+    if (N) {
+      // later resizes (e.g. the keyboard opening for the guess) rescale instead of resetting
+      for (let i = 0; i < N; i++) { px[i] *= W / prevW; py[i] *= H / prevH; landY[i] *= H / prevH; }
+      prevW = W; prevH = H;
+      return;
+    }
+    prevW = W; prevH = H;
     N = Math.min(3600, Math.round(W * H / 55));
     px = new Float32Array(N); py = new Float32Array(N);
     vx = new Float32Array(N); vy = new Float32Array(N);
     tw = new Float32Array(N);
+    falling = new Uint8Array(N); landY = new Float32Array(N); releaseAt = new Float32Array(N);
     for (let i = 0; i < N; i++) {
-      px[i] = Math.random() * W;
-      py[i] = Math.random() * H;
+      // heap: wide at the top edge, taller in the middle
+      const dx = gauss() * W * 0.3;
+      const heapHeight = H * 0.16 * Math.exp(-(dx * dx) / (2 * (W * 0.16) ** 2));
+      px[i] = W / 2 + dx;
+      py[i] = 3 + Math.random() * heapHeight;
+      landY[i] = H * (0.08 + Math.random() * 0.9);
+      // grains low in the heap go first, so it pours like a heap collapsing
+      releaseAt[i] = (1 - py[i] / (H * 0.16)) * 1400 + Math.random() * 500;
+      falling[i] = 1;
+      // sideways speed chosen so the grain lands at a random spot across the full width:
+      // fall time under constant acceleration a is sqrt(2 * distance / a) frames
+      const fallFrames = Math.sqrt(2 * (landY[i] - py[i]) / 0.35);
+      vx[i] = (Math.random() * W - px[i]) / fallFrames;
       tw[i] = Math.random() * Math.PI * 2;
     }
+  }
+
+  // Gradient of a grid array at a pixel position, interpolated between cell centres.
+  // Reading the raw cell value makes the force jump at cell borders, and grains
+  // line up along those borders in a visible lattice.
+  const grad = { x: 0, y: 0 };
+  function sampleGrad(a, x, y) {
+    const fx = Math.min(gw - 2.001, Math.max(1, x / CELL - 0.5));
+    const fy = Math.min(gh - 2.001, Math.max(1, y / CELL - 0.5));
+    const x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0;
+    const i00 = y0 * gw + x0, i10 = i00 + 1, i01 = i00 + gw, i11 = i01 + 1;
+    // central differences at the four surrounding cells, blended bilinearly
+    const dx = c => a[c + 1] - a[c - 1], dy = c => a[c + gw] - a[c - gw];
+    grad.x = (dx(i00) * (1 - tx) + dx(i10) * tx) * (1 - ty) + (dx(i01) * (1 - tx) + dx(i11) * tx) * ty;
+    grad.y = (dy(i00) * (1 - tx) + dy(i10) * tx) * (1 - ty) + (dy(i01) * (1 - tx) + dy(i11) * tx) * ty;
   }
 
   // ---------- input: tilt, touch, mouse ----------
@@ -305,12 +343,11 @@
     const dz = v => Math.abs(v) < DEAD ? 0 : v - Math.sign(v) * DEAD;
     gx += (dz(tiltX) - gx) * 0.25; gy += (dz(tiltY) - gy) * 0.25;
     const gmag = Math.hypot(gx, gy);
-    // caught sand only lets go when tilted hard
-    const hold = gmag > 0.35 ? (gmag - 0.35) / gmag : 0;
 
     // sand density, so piles spread out instead of collapsing to a point
     dens.fill(0);
     for (let i = 0; i < N; i++) {
+      if (falling[i]) continue;
       const cx = Math.min(gw - 1, Math.max(0, (px[i] / CELL) | 0));
       const cy = Math.min(gh - 1, Math.max(0, (py[i] / CELL) | 0));
       dens[cy * gw + cx] += 1;
@@ -320,38 +357,49 @@
     for (let i = 0; i < field.length; i++) field[i] += (target[i] - field[i]) * 0.02;
 
     const sx = stir.dx, sy = stir.dy, sr = 80, sr2 = sr * sr;
+    const pourMs = pourStart === null ? -1 : t - pourStart;
     for (let i = 0; i < N; i++) {
-      let x = px[i], y = py[i];
-      const cx = Math.min(gw - 2, Math.max(1, (x / CELL) | 0));
-      const cy = Math.min(gh - 2, Math.max(1, (y / CELL) | 0));
-      const ci = cy * gw + cx;
-      const f = field[ci];
-      const fgx = field[ci + 1] - field[ci - 1];
-      const fgy = field[ci + gw] - field[ci - gw];
-      const speed = Math.abs(vx[i]) + Math.abs(vy[i]);
-      const caught = f > 0.5;
-
-      // sand drifts with the liquid
-      const gk = caught ? 0.9 * hold : 0.9;
-      let ax = gx * gk, ay = gy * gk;
-      const spread = caught ? 0.015 : 0.05;
-      ax -= (dens[ci + 1] - dens[ci - 1]) * spread;
-      ay -= (dens[ci + gw] - dens[ci - gw]) * spread;
-
-      // grooves catch moving sand
-      const pull = 2.4 * Math.min(1, 0.04 + speed * 0.7);
-      ax += fgx * pull; ay += fgy * pull;
-
-      if (!caught) {
-        ax += (Math.random() - 0.5) * 0.03; ay += (Math.random() - 0.5) * 0.03;
+      // still in the heap, or in the air: simple fall until the grain reaches its landing spot
+      if (falling[i]) {
+        if (pourMs < releaseAt[i]) continue;
+        vy[i] += 0.35;
+        px[i] += vx[i]; py[i] += vy[i];
+        if (py[i] >= landY[i]) {
+          falling[i] = 0;
+          vx[i] *= 0.3; vy[i] *= 0.1;  // a soft thud, not a bounce
+          px[i] = Math.min(W, Math.max(0, px[i]));
+        }
+        continue;
       }
+
+      let x = px[i], y = py[i];
+      sampleGrad(field, x, y);
+      const fgx = grad.x, fgy = grad.y;
+      const slope = Math.hypot(fgx, fgy);
+      const speed = Math.abs(vx[i]) + Math.abs(vy[i]);
+      // Everything below only acts when something is moving the sand (tilt or speed),
+      // so sand lying on a still, level phone stays exactly where it is.
+      const active = Math.min(1, speed * 0.7 + gmag * 3);
+
+      // sand drifts with the liquid; crowded spots spread out
+      let ax = gx * 0.9, ay = gy * 0.9;
+      sampleGrad(dens, x, y);
+      ax -= grad.x * 0.05 * active; ay -= grad.y * 0.05 * active;
+
+      // The letter is a raised ridge: sand is pushed down its slopes and piles up against
+      // the sides, so the letter shows as a clear shape outlined in gold.
+      const push = 4 * active;
+      ax -= fgx * push; ay -= fgy * push;
+
+      ax += (Math.random() - 0.5) * 0.03 * active; ay += (Math.random() - 0.5) * 0.03 * active;
 
       if (stir.active) {
         const ddx = x - stir.x, ddy = y - stir.y, d2 = ddx * ddx + ddy * ddy;
         if (d2 < sr2) { const k = (1 - d2 / sr2) * 0.12; ax += sx * k; ay += sy * k; }
       }
 
-      const damp = caught ? 0.8 : 0.9;
+      // extra friction on the ridge slopes, so sand comes to rest along the sides
+      const damp = slope > 0.08 ? 0.8 : 0.9;
       vx[i] = (vx[i] + ax) * damp; vy[i] = (vy[i] + ay) * damp;
       x += vx[i]; y += vy[i];
       if (x < 0) { x = 0; vx[i] *= -0.3; } else if (x > W) { x = W; vx[i] *= -0.3; }
@@ -420,6 +468,7 @@
     $('start').classList.add('hidden');
     $('guess').classList.remove('hidden');
     running = true;
+    pourStart = performance.now();  // same clock as the requestAnimationFrame timestamp
     renderEggs();
   }
 
