@@ -101,8 +101,8 @@
 <script>
 (() => {
   const params = new URLSearchParams(location.search);
-  const PHASE_MS = params.has('fast') ? 12000 : 25000;  // per letter, including the empty pause; ?fast for testing
-  const BLANK_MS = params.has('fast') ? 1500 : 5000;    // empty pause between letters
+  const PHASE_MS = params.has('fast') ? 6000 : 10000;   // per letter, including the empty pause; ?fast for testing
+  const BLANK_MS = params.has('fast') ? 2000 : 5000;    // empty pause before each letter
   const SHOW_RELIEF = params.has('relief');              // ?relief shows where the letter is
 
   // Letters are stored obfuscated so a glance at the source shows nothing.
