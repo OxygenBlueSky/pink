@@ -96,6 +96,7 @@
 </div>
 
 <div class="guess hidden" id="guess">
+  <div class="eggs small" id="nosensor" hidden>Your browser is hiding the tilt. Try Chrome or Firefox.</div>
   <div class="eggs" id="eggs" aria-live="polite"></div>
   <div class="row" id="row">
     <input id="name" type="text" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="Who sent it?" aria-label="Your guess">
@@ -115,6 +116,7 @@
   const params = new URLSearchParams(location.search);
   const PHASE_MS = params.has('fast') ? 12000 : 50000;  // ?fast for testing
   const BLANK_MS = params.has('fast') ? 1500 : 5000;    // empty pause between letters
+  const SHOW_RELIEF = params.has('relief');              // ?relief shows where the letter is
 
   // Letters are stored obfuscated so a glance at the source shows nothing.
   const K = 90;
@@ -197,15 +199,13 @@
   }
 
   // ---------- sand ----------
-  // Every grain starts in a heap at the top and is poured onto the tray when play begins.
-  // falling[i] = 1 while a grain is still in the heap or in the air; landY is where it lands.
-  let N, px, py, vx, vy, tw, falling, landY, releaseAt, prevW, prevH;
-  let pourStart = null;
+  // Every grain starts in a heap at the top. It stays there until tilting moves it.
+  let N, px, py, vx, vy, tw, prevW, prevH;
   const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
   function initParticles() {
     if (N) {
       // later resizes (e.g. the keyboard opening for the guess) rescale instead of resetting
-      for (let i = 0; i < N; i++) { px[i] *= W / prevW; py[i] *= H / prevH; landY[i] *= H / prevH; }
+      for (let i = 0; i < N; i++) { px[i] *= W / prevW; py[i] *= H / prevH; }
       prevW = W; prevH = H;
       return;
     }
@@ -214,21 +214,12 @@
     px = new Float32Array(N); py = new Float32Array(N);
     vx = new Float32Array(N); vy = new Float32Array(N);
     tw = new Float32Array(N);
-    falling = new Uint8Array(N); landY = new Float32Array(N); releaseAt = new Float32Array(N);
     for (let i = 0; i < N; i++) {
-      // heap: wide at the top edge, taller in the middle
+      // heap: wide along the top edge, taller in the middle
       const dx = gauss() * W * 0.3;
       const heapHeight = H * 0.16 * Math.exp(-(dx * dx) / (2 * (W * 0.16) ** 2));
-      px[i] = W / 2 + dx;
+      px[i] = Math.min(W, Math.max(0, W / 2 + dx));
       py[i] = 3 + Math.random() * heapHeight;
-      landY[i] = H * (0.08 + Math.random() * 0.9);
-      // grains low in the heap go first, so it pours like a heap collapsing
-      releaseAt[i] = (1 - py[i] / (H * 0.16)) * 1400 + Math.random() * 500;
-      falling[i] = 1;
-      // sideways speed chosen so the grain lands at a random spot across the full width:
-      // fall time under constant acceleration a is sqrt(2 * distance / a) frames
-      const fallFrames = Math.sqrt(2 * (landY[i] - py[i]) / 0.35);
-      vx[i] = (Math.random() * W - px[i]) / fallFrames;
       tw[i] = Math.random() * Math.PI * 2;
     }
   }
@@ -347,7 +338,6 @@
     // sand density, so piles spread out instead of collapsing to a point
     dens.fill(0);
     for (let i = 0; i < N; i++) {
-      if (falling[i]) continue;
       const cx = Math.min(gw - 1, Math.max(0, (px[i] / CELL) | 0));
       const cy = Math.min(gh - 1, Math.max(0, (py[i] / CELL) | 0));
       dens[cy * gw + cx] += 1;
@@ -357,21 +347,7 @@
     for (let i = 0; i < field.length; i++) field[i] += (target[i] - field[i]) * 0.02;
 
     const sx = stir.dx, sy = stir.dy, sr = 80, sr2 = sr * sr;
-    const pourMs = pourStart === null ? -1 : t - pourStart;
     for (let i = 0; i < N; i++) {
-      // still in the heap, or in the air: simple fall until the grain reaches its landing spot
-      if (falling[i]) {
-        if (pourMs < releaseAt[i]) continue;
-        vy[i] += 0.35;
-        px[i] += vx[i]; py[i] += vy[i];
-        if (py[i] >= landY[i]) {
-          falling[i] = 0;
-          vx[i] *= 0.3; vy[i] *= 0.1;  // a soft thud, not a bounce
-          px[i] = Math.min(W, Math.max(0, px[i]));
-        }
-        continue;
-      }
-
       let x = px[i], y = py[i];
       sampleGrad(field, x, y);
       const fgx = grad.x, fgy = grad.y;
@@ -432,16 +408,18 @@
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     }
 
-    // the faint bulge of the hidden relief
-    if (frame % 4 === 0) {
-      const d = reliefImg.data;
-      for (let i = 0; i < field.length; i++) {
-        d[i * 4] = 170; d[i * 4 + 1] = 30; d[i * 4 + 2] = 100; d[i * 4 + 3] = field[i] * 26;
+    // faint shading of the hidden relief, only with ?relief (for tuning; only the sand should tell)
+    if (SHOW_RELIEF) {
+      if (frame % 4 === 0) {
+        const d = reliefImg.data;
+        for (let i = 0; i < field.length; i++) {
+          d[i * 4] = 170; d[i * 4 + 1] = 30; d[i * 4 + 2] = 100; d[i * 4 + 3] = field[i] * 26;
+        }
+        reliefCtx.putImageData(reliefImg, 0, 0);
       }
-      reliefCtx.putImageData(reliefImg, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(relief, 0, 0, gw * CELL, gh * CELL);
     }
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(relief, 0, 0, gw * CELL, gh * CELL);
 
     for (let b = 0; b < 3; b++) {
       ctx.fillStyle = golds[b];
@@ -468,7 +446,6 @@
     $('start').classList.add('hidden');
     $('guess').classList.remove('hidden');
     running = true;
-    pourStart = performance.now();  // same clock as the requestAnimationFrame timestamp
     renderEggs();
   }
 
@@ -485,6 +462,9 @@
       // no tilt: fingers can still stir the sand
     }
     begin();
+    // Some privacy browsers (Brave, Cromite) silently withhold motion sensors.
+    // If nothing has arrived after a few seconds, say so instead of looking broken.
+    setTimeout(() => { if (events === 0) $('nosensor').hidden = false; }, 3000);
   });
   (isPhone ? $('start') : $('gate')).classList.remove('hidden');
 
