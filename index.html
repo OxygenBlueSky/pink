@@ -22,17 +22,6 @@
   html, body { height: 100%; margin: 0; overflow: hidden; background: var(--pink); color: var(--plum); font-family: var(--body); }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
 
-  .dots {
-    position: fixed; left: 0; right: 0; top: calc(env(safe-area-inset-top, 0px) + 18px);
-    display: flex; justify-content: center; gap: 14px; pointer-events: none;
-  }
-  .dot {
-    width: 13px; height: 13px; border-radius: 0 50% 50% 50%; transform: rotate(45deg);
-    background: rgba(255,255,255,0.35); box-shadow: inset 0 0 0 1.5px rgba(62,15,46,0.25);
-    transition: background 1.2s ease, box-shadow 1.2s ease;
-  }
-  .dot.lit { background: var(--gold); box-shadow: 0 0 10px rgba(242,193,78,0.9); }
-
   .overlay {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     padding: calc(env(safe-area-inset-top, 0px) + 24px) 28px calc(env(safe-area-inset-bottom, 0px) + 24px);
@@ -76,8 +65,6 @@
 <body>
 <canvas id="c" aria-hidden="true"></canvas>
 
-<div class="dots" id="dots" aria-hidden="true"></div>
-
 <div class="overlay hidden" id="gate">
   <div class="card">
     <h1>This one has to be held.</h1>
@@ -89,7 +76,6 @@
 <div class="overlay hidden" id="start">
   <div class="card">
     <h1>Something pink arrived.</h1>
-    <p>Hold your phone the way you'd hold the postcard. That's level. Now tilt it, slowly, and be patient with the sand.</p>
     <p class="small">Guess wrong and you owe me a chocolate egg. Guess right and I owe you one.</p>
     <button id="go">Tip it over</button>
   </div>
@@ -122,7 +108,7 @@
   const K = 90;
   const dec = a => String.fromCharCode(...a.map(c => c ^ K));
   const FIRST_FIVE = [27, 20, 31, 17, 27];
-  const LAST_PLAIN = [0], LAST_HAT = [295];
+  const LAST = [0];
   const REVEAL = [27, 52, 63, 292, 49, 59];
   const ANSWER = 4450202707936388;
 
@@ -284,38 +270,27 @@
   blobs.forEach(b => { b.hx = b.x; b.hy = b.y; });
 
   // ---------- phases ----------
-  const dotsEl = document.getElementById('dots');
-  for (let i = 0; i < 6; i++) { const d = document.createElement('div'); d.className = 'dot'; dotsEl.appendChild(d); }
-  const dotEls = [...dotsEl.children];
-
   let running = false, phase = -1, phaseStart = 0, order = [];
   function newRound() {
+    // Fisher-Yates shuffle of the first five, so each round shows them in a fresh order
     const five = FIRST_FIVE.slice();
     for (let i = five.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [five[i], five[j]] = [five[j], five[i]]; }
-    order = five.map(c => ({ plain: dec([c]) }));
-    order.push({ plain: dec(LAST_PLAIN), hat: dec(LAST_HAT) });  // always last
+    order = five.map(c => dec([c]));
+    order.push(dec(LAST));  // always last
   }
   function phaseGlyph(t) {
-    const el = t - phaseStart;
-    if (el < BLANK_MS) return null;
-    const p = order[phase];
-    if (p.hat && el > BLANK_MS + (PHASE_MS - BLANK_MS) * 0.45) return p.hat;
-    return p.plain;
+    if (t - phaseStart < BLANK_MS) return null;
+    return order[phase];
   }
   function tickPhase(t) {
     if (!running) return;
     if (phase < 0 || t - phaseStart > PHASE_MS) {
       phase++;
-      if (phase >= 6 || order.length === 0) {
-        newRound(); phase = 0;
-        dotEls.forEach(d => d.classList.remove('lit'));
-      }
+      if (phase >= order.length) { newRound(); phase = 0; }
       phaseStart = t;
     }
     const g = phaseGlyph(t);
     if (g !== currentGlyph) setTarget(g);
-    // the dot lights when the letter arrives, not at the start of the empty pause
-    if (g) dotEls[phase].classList.add('lit');
   }
 
   // ---------- main loop ----------
